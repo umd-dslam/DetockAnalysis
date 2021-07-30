@@ -9,6 +9,11 @@ from pyspark.sql.types import StructType, StructField
 
 from os.path import basename, dirname
 
+
+def collect_col(sdf, col_name):
+    return list(map(lambda r : r[col_name], sdf.collect()))
+    
+
 @udf("string")
 def ancestor_udf(path, step=1):
     if step <= 0:
@@ -106,23 +111,28 @@ def throughput(spark, prefix, sample, per_region=False, **kwargs):
         return throughput_sdf.select(F.sum("throughput").alias("throughput"))
 
 
-def latency(spark, prefix, percentage=None, where=None, **kwargs):
+def latency(spark, prefixes, **kwargs):
     '''Compute latency from client/*/transactions.csv file'''
+    latency_sdfs = []
+    for p in prefixes:
+        lat_sdf = transactions_csv(spark, p, **kwargs).select(
+            "txn_id",
+            "coordinator",
+            "replicas",
+            "partitions",
+            ((col("received_at") - col("sent_at")) / 1000000).alias("latency")
+        )\
+        .withColumn("prefix", lit(p))
 
-    latency_sdf = transactions_csv(spark, prefix, **kwargs).select(
-        "txn_id",
-        "coordinator",
-        "replicas",
-        "partitions",
-        ((col("received_at") - col("sent_at")) / 1000000).alias("latency")
-    )
-    if where is not None:
-        latency_sdf = latency_sdf.where(where)
-    if not percentage:
-        return latency_sdf
-    return latency_sdf.select(
-        F.percentile_approx("latency", percentage, 100000).alias("percentiles")
-    )
+        latency_sdfs.append(lat_sdf)
+
+    assert len(latency_sdfs) > 0, "No latency data found"
+
+    latency_sdf = latency_sdfs[0]
+    for l in latency_sdfs[1:]:
+        latency_sdf = latency_sdf.union(l)
+
+    return latency_sdf
 
 
 #----------------------- client/*/txn_events.csv -----------------------
