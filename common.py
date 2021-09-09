@@ -27,32 +27,20 @@ basename_udf = udf(basename, T.StringType())
 
 #----------------------- client/*/transactions.csv -----------------------
 
-def transactions_csv(spark, prefix, trim_start_sec=0, trim_end_sec=0, new_version=True):
+def transactions_csv(spark, prefix, start_offset_sec=0, duration_sec=1000000000):
     '''Reads client/*/transactions.csv files into a Spark dataframe'''
     
-    if new_version:
-        transactions_schema = StructType([
-            StructField("txn_id", T.LongType(), False),
-            StructField("coordinator", T.IntegerType(), False),
-            StructField("replicas", T.StringType(), False),
-            StructField("partitions", T.StringType(), False),
-            StructField("generator", T.LongType(), False),
-            StructField("restarts", T.IntegerType(), False),
-            StructField("global_log_pos", T.StringType(), False),
-            StructField("sent_at", T.DoubleType(), False),
-            StructField("received_at", T.DoubleType(), False),
-        ])
-    else:
-        transactions_schema = StructType([
-            StructField("txn_id", T.LongType(), False),
-            StructField("coordinator", T.IntegerType(), False),
-            StructField("replicas", T.StringType(), False),
-            StructField("partitions", T.StringType(), False),
-            StructField("generator", T.LongType(), False),
-            StructField("restarts", T.IntegerType(), False),
-            StructField("sent_at", T.DoubleType(), False),
-            StructField("received_at", T.DoubleType(), False),
-        ])
+    transactions_schema = StructType([
+        StructField("txn_id", T.LongType(), False),
+        StructField("coordinator", T.IntegerType(), False),
+        StructField("replicas", T.StringType(), False),
+        StructField("partitions", T.StringType(), False),
+        StructField("generator", T.LongType(), False),
+        StructField("restarts", T.IntegerType(), False),
+        StructField("global_log_pos", T.StringType(), False),
+        StructField("sent_at", T.DoubleType(), False),
+        StructField("received_at", T.DoubleType(), False),
+    ])
 
     sdf = spark.read.csv(
         f"{prefix}/client/*/transactions.csv",
@@ -72,32 +60,61 @@ def transactions_csv(spark, prefix, trim_start_sec=0, trim_end_sec=0, new_versio
         basename_udf(ancestor_udf(F.input_file_name())).cast(T.IntegerType())
     )\
     .withColumn(
-        "min_received_at",
-        F.min("received_at").over(Window.partitionBy("machine"))
+        "min_sent_at",
+        F.min("sent_at").over(Window.partitionBy("machine"))
     )\
     .withColumn(
-        "max_received_at",
-        F.max("received_at").over(Window.partitionBy("machine"))
+        "max_sent_at",
+        F.max("sent_at").over(Window.partitionBy("machine"))
+    )\
+    .withColumn(
+        "global_log_pos",
+        F.split("global_log_pos", ";").cast(T.ArrayType(T.IntegerType()))
     )\
     .where(
-        (col("received_at") >= col("min_received_at") + trim_start_sec * 1000000000) &
-        (col("received_at") <= col("max_received_at") - trim_end_sec * 1000000000)
+        (col("sent_at") >= col("min_sent_at") + start_offset_sec * 1000000000) &
+        (col("sent_at") <= col("max_sent_at") + (start_offset_sec + duration_sec) * 1000000000)
     )
-    
-    if new_version:
-        sdf = sdf.withColumn(
-            "global_log_pos",
-            F.array_sort(F.split("global_log_pos", ";").cast(T.ArrayType(T.IntegerType())))
-        )
 
     return sdf
 
 
-def throughput(spark, prefix, sample, per_region=False, **kwargs):
-    '''Computes throughput from client/*/transactions.csv file'''
+def summary_csv(spark, prefix):
+    summary_schema = StructType([
+        StructField("committed", T.LongType(), False),
+        StructField("aborted", T.LongType(), False),
+        StructField("not_started", T.LongType(), False),
+        StructField("restarted", T.LongType(), False),
+        StructField("single_home", T.LongType(), False),
+        StructField("multi_home", T.LongType(), False),
+        StructField("single_partition", T.LongType(), False),
+        StructField("multi_partition", T.LongType(), False),
+        StructField("remaster", T.LongType(), False),
+        StructField("elapsed_time", T.LongType(), False)
+    ])
 
+    return spark.read.csv(
+        f"{prefix}/client/*/summary.csv",
+        header=True,
+        schema=summary_schema
+    )\
+    .withColumn(
+        "machine",
+        basename_udf(ancestor_udf(F.input_file_name())).cast(T.IntegerType())
+    )
+
+
+def sample_rate(spark, prefix):
+    sampled_txns = transactions_csv(spark, prefix).count()
+    total_committed = summary_csv(spark, prefix).select("committed").groupby().sum().collect()[0][0]
+    return sampled_txns / total_committed * 100 
+
+    
+def throughput(spark, prefix, per_region=False, **kwargs):
+    '''Computes throughput from client/*/transactions.csv file'''
+    sample = sample_rate(spark, prefix)
     throughput_sdf = transactions_csv(spark, prefix, **kwargs)\
-        .select("machine", col("received_at").alias("time"))\
+        .select("machine", col("sent_at").alias("time"))\
         .groupBy("machine")\
         .agg(
             (
@@ -267,7 +284,7 @@ def plot_cdf(ax, a, scale="log", **kargs):
     ax.set_xscale(scale)
 
 
-def plot_event_throughput(dfs, **kargs):
+def plot_event_throughput(dfs, sharey=True, sharex=True, **kargs):
     events = [
         'ENTER_SERVER',
         'EXIT_SERVER_TO_FORWARDER',
@@ -281,10 +298,10 @@ def plot_event_throughput(dfs, **kargs):
         'ENTER_SEQUENCER',
         'EXIT_SEQUENCER_IN_BATCH',
         '',
-        'ENTER_INTERLEAVER_IN_BATCH',
-        'EXIT_INTERLEAVER',
-#         'ENTER_LOG_MANAGER_IN_BATCH',
-#         'EXIT_LOG_MANAGER',
+#         'ENTER_INTERLEAVER_IN_BATCH',
+#         'EXIT_INTERLEAVER',
+        'ENTER_LOG_MANAGER_IN_BATCH',
+        'EXIT_LOG_MANAGER',
         '',
         'ENTER_SCHEDULER',
         'ENTER_SCHEDULER_LO',
@@ -300,7 +317,7 @@ def plot_event_throughput(dfs, **kargs):
         '',
     ]
     num_rows, num_cols = compute_rows_cols(len(events), num_cols=3)
-    _, axes = plt.subplots(num_rows, num_cols, sharey=True, sharex=True, figsize=(17, 25))
+    _, axes = plt.subplots(num_rows, num_cols, sharey=sharey, sharex=sharex, figsize=(17, 25))
     
     for df in dfs.values():
         df.loc[:, 'time'] = normalize(df.loc[:, 'time'])
