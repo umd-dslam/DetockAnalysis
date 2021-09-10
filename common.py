@@ -104,6 +104,21 @@ def summary_csv(spark, prefix):
     )
 
 
+def deadlocks_csv(spark, prefix):
+    deadlocks_schema = StructType([
+        StructField("time", T.LongType(), False),
+        StructField("partition", T.IntegerType(), False),
+        StructField("replica", T.IntegerType(), False),
+        StructField("vertices", T.IntegerType(), False),
+    ])
+
+    return spark.read.csv(
+        f"{prefix}/server/*/deadlocks.csv",
+        header=True,
+        schema=deadlocks_schema
+    )
+
+
 def sample_rate(spark, prefix):
     sampled_txns = transactions_csv(spark, prefix).count()
     total_committed = summary_csv(spark, prefix).select("committed").groupby().sum().collect()[0][0]
@@ -275,13 +290,17 @@ def compute_rows_cols(num_axes, num_cols=3):
 
 #----------------------- plot functions -----------------------
 
-def plot_cdf(ax, a, scale="log", **kargs):
+def plot_cdf(a, ax=None, scale="log", **kargs):
     x = np.sort(a)
     y = np.arange(1, len(x)+1) / len(x)
     kargs.setdefault("markersize", 2)
     kargs.setdefault("marker", 'o')
-    ax.plot(x, y, **kargs)
-    ax.set_xscale(scale)
+    if ax is not None:
+        ax.plot(x, y, **kargs)
+        ax.set_xscale(scale)
+    else:
+        plt.plot(x, y, **kargs)
+        plt.xscale(scale)
 
 
 def plot_event_throughput(dfs, sharey=True, sharex=True, **kargs):
