@@ -1,5 +1,6 @@
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import pyspark.sql.functions as F
 import pyspark.sql.types as T
 
@@ -7,7 +8,7 @@ from pyspark.sql.window import Window
 from pyspark.sql.functions import col, lit, udf
 from pyspark.sql.types import StructType, StructField
 
-from os.path import basename, dirname
+from os.path import basename, dirname, isfile
 
 
 def collect_col(sdf, col_name):
@@ -119,10 +120,14 @@ def deadlocks_csv(spark, prefix):
     )
 
 
+def committed(spark, prefix):
+    return summary_csv(spark, prefix).select("committed").groupby().sum().collect()[0][0]
+
+
 def sample_rate(spark, prefix):
-    sampled_txns = transactions_csv(spark, prefix).count()
-    total_committed = summary_csv(spark, prefix).select("committed").groupby().sum().collect()[0][0]
-    return sampled_txns / total_committed * 100 
+    sampled = transactions_csv(spark, prefix).count()
+    txns = committed(spark, prefix)
+    return sampled / txns * 100 
 
     
 def throughput(spark, prefix, per_region=False, **kwargs):
@@ -287,6 +292,14 @@ def compute_rows_cols(num_axes, num_cols=3):
     num_rows = num_axes // num_cols + (num_axes % num_cols > 0)
     return num_rows, num_cols
 
+
+def from_cache_or_compute(cache_path, func, ignore_cache=False):
+    if not ignore_cache and isfile(cache_path):
+        return pd.read_parquet(cache_path)
+    res = func()
+    res.to_parquet(cache_path)        
+    print(f"Saved to: {cache_path}")
+    return res
 
 #----------------------- plot functions -----------------------
 
