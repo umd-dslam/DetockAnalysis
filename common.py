@@ -120,6 +120,24 @@ def deadlocks_csv(spark, prefix):
     )
 
 
+def txn_timestamps_csv(spark, prefix):
+    txn_timestamp_schema = StructType([
+        StructField("txn_id", T.LongType(), False),
+        StructField("from", T.IntegerType(), False),
+        StructField("txn_timestamp", T.LongType(), False),
+        StructField("server_time", T.LongType(), False)
+    ])
+    split_file_name = F.split(basename_udf(ancestor_udf(F.input_file_name())), '-')
+    return spark.read.csv(
+        f"{prefix}/server/*/txn_timestamps.csv",
+        header=True,
+        schema=txn_timestamp_schema
+    )\
+    .withColumn("dev", (col("txn_timestamp") - col("server_time")) / 1000000)\
+    .withColumn("replica", split_file_name[0].cast(T.IntegerType()))\
+    .withColumn("partition", split_file_name[1].cast(T.IntegerType()))
+    
+
 def committed(spark, prefix):
     return summary_csv(spark, prefix).select("committed").groupby().sum().collect()[0][0]
 
