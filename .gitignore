@@ -2,3 +2,5 @@
 !*.py
 !*.ipynb
 !.gitignore
+!*.sh
+!*.parquet
