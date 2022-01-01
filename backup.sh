@@ -1,6 +1,6 @@
 #!/bin/sh
 
-find . -type f                        \
+find main -type f                     \
   \( -name "*.ipynb" -o               \
      -name "*.tar.gz" -o              \
      -name "crdb-latency.csv" -o      \
