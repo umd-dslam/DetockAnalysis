@@ -325,7 +325,6 @@ def plot_cdf(a, ax=None, scale="log", **kargs):
     x = np.sort(a)
     y = np.arange(1, len(x)+1) / len(x)
     kargs.setdefault("markersize", 2)
-    kargs.setdefault("marker", 'o')
     if ax is not None:
         ax.plot(x, y, **kargs)
         ax.set_xscale(scale)
