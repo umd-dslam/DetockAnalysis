@@ -26,6 +26,25 @@ def ancestor_udf(path, step=1):
 
 basename_udf = udf(basename, T.StringType())
 
+def get_index(spark, prefix):
+    client_sdf = spark.read.csv(f"{prefix}/*/client/0/metadata.csv", header=True)\
+        .withColumn(
+            "prefix",
+            ancestor_udf(F.input_file_name(), lit(3))
+        )
+
+    server_sdf = spark.read.csv(f"{prefix}/*/server/0-0/metadata.csv", header=True)\
+        .withColumn(
+            "prefix",
+            ancestor_udf(F.input_file_name(), lit(3))
+        )
+
+    return server_sdf.join(client_sdf, on='prefix')\
+        .withColumn("duration", col("duration").cast(T.IntegerType()))\
+        .withColumn("txns", col("txns").cast(T.IntegerType()))\
+        .withColumn("clients", col("clients").cast(T.IntegerType()))\
+        .withColumn("rate", col("rate").cast(T.IntegerType()))
+
 #----------------------- client/*/transactions.csv -----------------------
 
 def transactions_csv(spark, prefix, start_offset_sec=0, duration_sec=1000000000):
