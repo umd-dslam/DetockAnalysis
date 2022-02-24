@@ -1,15 +1,13 @@
 #!/bin/sh
 
 find main -type f                     \
-  \( -name "*.ipynb" -o               \
-     -name "*.tar.gz" -o              \
+  \( -name "*.tar.gz" -o              \
+     -name "*.parquet" -o             \
+     -name "*.pickle" -o              \
      -name "crdb-latency.csv" -o      \
-     -name "crdb.csv" -o              \
-     -name "*.sh" -o                  \
-     -name "*.parquet" \)             \
-  -not -path "./archived/*"           \
-  -not -path "./quick/*"              \
+     -name "crdb.csv"                 \
+  \)                                  \
   -not -path "./.ipynb_checkpoints/*" \
   > backup-files.txt
 
-tar -czvf detock.tar.gz -T backup-files.txt
+# tar -czvf detock.tar.gz -T backup-files.txt

@@ -13,6 +13,7 @@
 !.keep
 !crdb.csv
 !crdb-latency.csv
+!requirements.txt
 
 # Ignore notebook checkpoints
 .ipynb_checkpoints/
