@@ -1,6 +1,22 @@
+# Ignore everything
 *
+
+# Don't ignore directories, so we can recurse into them
+!*/
+
+# Don't ignore these files
 !*.py
 !*.ipynb
-!.gitignore
 !*.sh
 !*.parquet
+!.gitignore
+!.keep
+!crdb.csv
+!crdb-latency.csv
+
+# Ignore notebook checkpoints
+.ipynb_checkpoints/
+
+# Ignore virtual environment
+venv/
+
