@@ -14,6 +14,7 @@
 !crdb.csv
 !crdb-latency.csv
 !requirements.txt
+!README.md
 
 # Ignore notebook checkpoints
 .ipynb_checkpoints/
