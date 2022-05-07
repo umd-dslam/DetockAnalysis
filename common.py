@@ -47,13 +47,15 @@ def get_index(spark, prefix):
 
 #----------------------- client/*/transactions.csv -----------------------
 
-def transactions_csv(spark, prefix, start_offset_sec=0, duration_sec=1000000000):
+def transactions_csv(spark, prefix, new_schema=False, start_offset_sec=0, duration_sec=1000000000):
     '''Reads client/*/transactions.csv files into a Spark dataframe'''
     
+    regions_col_name = "regions" if new_schema else "replicas"
+
     transactions_schema = StructType([
         StructField("txn_id", T.LongType(), False),
         StructField("coordinator", T.IntegerType(), False),
-        StructField("replicas", T.StringType(), False),
+        StructField(regions_col_name, T.StringType(), False),
         StructField("partitions", T.StringType(), False),
         StructField("generator", T.LongType(), False),
         StructField("restarts", T.IntegerType(), False),
@@ -68,8 +70,8 @@ def transactions_csv(spark, prefix, start_offset_sec=0, duration_sec=1000000000)
         schema=transactions_schema
     )\
     .withColumn(
-        "replicas",
-        F.array_sort(F.split("replicas", ";").cast(T.ArrayType(T.IntegerType())))
+        regions_col_name,
+        F.array_sort(F.split(regions_col_name, ";").cast(T.ArrayType(T.IntegerType())))
     )\
     .withColumn(
         "partitions",
@@ -124,11 +126,13 @@ def summary_csv(spark, prefix):
     )
 
 
-def deadlocks_csv(spark, prefix):
+def deadlocks_csv(spark, prefix, new_schema=False):
+    region_col_name = "region" if new_schema else "replica"
+
     deadlocks_schema = StructType([
         StructField("time", T.LongType(), False),
         StructField("partition", T.IntegerType(), False),
-        StructField("replica", T.IntegerType(), False),
+        StructField(region_col_name, T.IntegerType(), False),
         StructField("vertices", T.IntegerType(), False),
     ])
 
@@ -153,7 +157,7 @@ def txn_timestamps_csv(spark, prefix):
         schema=txn_timestamp_schema
     )\
     .withColumn("dev", (col("txn_timestamp") - col("server_time")) / 1000000)\
-    .withColumn("replica", split_file_name[0].cast(T.IntegerType()))\
+    .withColumn("region", split_file_name[0].cast(T.IntegerType()))\
     .withColumn("partition", split_file_name[1].cast(T.IntegerType()))
     
 
@@ -161,16 +165,16 @@ def committed(spark, prefix):
     return summary_csv(spark, prefix).select("committed").groupby().sum().collect()[0][0]
 
 
-def sample_rate(spark, prefix):
-    sampled = transactions_csv(spark, prefix).count()
+def sample_rate(spark, prefix, new_schema=False):
+    sampled = transactions_csv(spark, prefix, new_schema).count()
     txns = committed(spark, prefix)
     return sampled / txns * 100 
 
     
-def throughput(spark, prefix, per_region=False, **kwargs):
+def throughput(spark, prefix, new_schema=False, per_region=False, **kwargs):
     '''Computes throughput from client/*/transactions.csv file'''
-    sample = sample_rate(spark, prefix)
-    throughput_sdf = transactions_csv(spark, prefix, **kwargs)\
+    sample = sample_rate(spark, prefix, new_schema)
+    throughput_sdf = transactions_csv(spark, prefix, new_schema, **kwargs)\
         .select("machine", col("sent_at").alias("time"))\
         .groupBy("machine")\
         .agg(
@@ -178,21 +182,21 @@ def throughput(spark, prefix, per_region=False, **kwargs):
                 F.count("time") * 1000000000 * (100/sample) / (F.max("time") - F.min("time"))
             ).alias("throughput")
         )
-    
+
     if per_region:
         return throughput_sdf
     else:
         return throughput_sdf.select(F.sum("throughput").alias("throughput"))
 
 
-def latency(spark, prefixes, **kwargs):
+def latency(spark, prefixes, new_schema=False, **kwargs):
     '''Compute latency from client/*/transactions.csv file'''
     latency_sdfs = []
     for p in prefixes:
-        lat_sdf = transactions_csv(spark, p, **kwargs).select(
+        lat_sdf = transactions_csv(spark, p, new_schema, **kwargs).select(
             "txn_id",
             "coordinator",
-            "replicas",
+            "regions" if new_schema else "replicas",
             "partitions",
             ((col("received_at") - col("sent_at")) / 1000000).alias("latency")
         )\
@@ -250,7 +254,7 @@ def events_latency(spark, prefix, from_event, to_event, new_col_name=None):
 
 #----------------------- server/*/events.csv -----------------------
 
-def events_csv(spark, prefix):
+def events_csv(spark, prefix, new_schema=False):
     '''Reads server/*/events.csv files into a Spark dataframe'''
 
     events_schema = StructType([
@@ -258,7 +262,7 @@ def events_csv(spark, prefix):
         StructField("event", T.StringType(), False),
         StructField("time", T.DoubleType(), False),
         StructField("partition", T.IntegerType(), False),
-        StructField("replica", T.IntegerType(), False),
+        StructField("region" if new_schema else "replica", T.IntegerType(), False),
     ])
 
     return spark.read.csv(
@@ -268,14 +272,14 @@ def events_csv(spark, prefix):
     )
 
 
-def events_throughput(spark, prefix, sample, per_machine=False):
+def events_throughput(spark, prefix, sample, new_schema=False, per_machine=False):
     '''Counts number of events per time unit'''
 
     group_by_cols = ["event", "time"]
     if per_machine:
-        group_by_cols += ["partition", "replica"]
+        group_by_cols += ["partition", "region" if new_schema else "replica"]
 
-    return events_csv(spark, prefix).withColumn(
+    return events_csv(spark, prefix, new_schema).withColumn(
         "time",
         (col("time") / 1000000000).cast(T.LongType())
     )\
