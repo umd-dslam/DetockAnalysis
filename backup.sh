@@ -7,7 +7,6 @@ experiments="cockroach \
              ycsb-jitter \
              ycsb-jitter-overshoot10 \
              ycsb-latency"
-experiments="ycsb-jitter-overshoot10"
 
 for exp in $experiments
 do

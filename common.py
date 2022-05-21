@@ -27,17 +27,19 @@ def ancestor_udf(path, step=1):
 basename_udf = udf(basename, T.StringType())
 
 def get_index(spark, prefix):
-    client_sdf = spark.read.csv(f"{prefix}/*/client/0/metadata.csv", header=True)\
+    client_sdf = spark.read.csv(f"{prefix}/*/client/*/metadata.csv", header=True)\
         .withColumn(
             "prefix",
             ancestor_udf(F.input_file_name(), lit(3))
-        )
+        )\
+        .dropDuplicates()
 
-    server_sdf = spark.read.csv(f"{prefix}/*/server/0-0/metadata.csv", header=True)\
+    server_sdf = spark.read.csv(f"{prefix}/*/server/*/metadata.csv", header=True)\
         .withColumn(
             "prefix",
             ancestor_udf(F.input_file_name(), lit(3))
-        )
+        )\
+        .dropDuplicates()
 
     return server_sdf.join(client_sdf, on='prefix')\
         .withColumn("duration", col("duration").cast(T.IntegerType()))\
@@ -159,7 +161,23 @@ def txn_timestamps_csv(spark, prefix):
     .withColumn("dev", (col("txn_timestamp") - col("server_time")) / 1000000)\
     .withColumn("region", split_file_name[0].cast(T.IntegerType()))\
     .withColumn("partition", split_file_name[1].cast(T.IntegerType()))
-    
+
+
+def generic_csv(spark, prefix):
+    generic_schema = StructType([
+        StructField("type", T.IntegerType(), False),
+        StructField("time", T.LongType(), False),
+        StructField("data", T.LongType(), False),
+        StructField("partition", T.IntegerType(), False),
+        StructField("region", T.IntegerType(), False),
+    ])
+
+    return spark.read.csv(
+        f"{prefix}/server/*/generic.csv",
+        header=True,
+        schema=generic_schema
+    )
+
 
 def committed(spark, prefix):
     return summary_csv(spark, prefix).select("committed").groupby().sum().collect()[0][0]
@@ -189,7 +207,7 @@ def throughput(spark, prefix, new_schema=False, per_region=False, **kwargs):
         return throughput_sdf.select(F.sum("throughput").alias("throughput"))
 
 
-def latency(spark, prefixes, new_schema=False, **kwargs):
+def latency(spark, prefixes, sample=1.0, new_schema=False, **kwargs):
     '''Compute latency from client/*/transactions.csv file'''
     latency_sdfs = []
     for p in prefixes:
@@ -200,7 +218,8 @@ def latency(spark, prefixes, new_schema=False, **kwargs):
             "partitions",
             ((col("received_at") - col("sent_at")) / 1000000).alias("latency")
         )\
-        .withColumn("prefix", lit(p))
+        .withColumn("prefix", lit(p))\
+        .sample(sample)
 
         latency_sdfs.append(lat_sdf)
 
@@ -370,8 +389,6 @@ def plot_event_throughput(dfs, sharey=True, sharex=True, **kargs):
         'ENTER_SEQUENCER',
         'EXIT_SEQUENCER_IN_BATCH',
         '',
-#         'ENTER_INTERLEAVER_IN_BATCH',
-#         'EXIT_INTERLEAVER',
         'ENTER_LOG_MANAGER_IN_BATCH',
         'EXIT_LOG_MANAGER',
         '',
