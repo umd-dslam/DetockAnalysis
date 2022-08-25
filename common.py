@@ -49,15 +49,13 @@ def get_index(spark, prefix):
 
 #----------------------- client/*/transactions.csv -----------------------
 
-def transactions_csv(spark, prefix, new_schema=False, start_offset_sec=0, duration_sec=1000000000):
+def transactions_csv(spark, prefix, start_offset_sec=0, duration_sec=1000000000):
     '''Reads client/*/transactions.csv files into a Spark dataframe'''
     
-    regions_col_name = "regions" if new_schema else "replicas"
-
     transactions_schema = StructType([
         StructField("txn_id", T.LongType(), False),
         StructField("coordinator", T.IntegerType(), False),
-        StructField(regions_col_name, T.StringType(), False),
+        StructField("regions", T.StringType(), False),
         StructField("partitions", T.StringType(), False),
         StructField("generator", T.LongType(), False),
         StructField("restarts", T.IntegerType(), False),
@@ -72,8 +70,8 @@ def transactions_csv(spark, prefix, new_schema=False, start_offset_sec=0, durati
         schema=transactions_schema
     )\
     .withColumn(
-        regions_col_name,
-        F.array_sort(F.split(regions_col_name, ";").cast(T.ArrayType(T.IntegerType())))
+        "regions",
+        F.array_sort(F.split("regions", ";").cast(T.ArrayType(T.IntegerType())))
     )\
     .withColumn(
         "partitions",
@@ -183,16 +181,16 @@ def committed(spark, prefix):
     return summary_csv(spark, prefix).select("committed").groupby().sum().collect()[0][0]
 
 
-def sample_rate(spark, prefix, new_schema=False):
-    sampled = transactions_csv(spark, prefix, new_schema).count()
+def sample_rate(spark, prefix):
+    sampled = transactions_csv(spark, prefix).count()
     txns = committed(spark, prefix)
     return sampled / txns * 100 
 
     
-def throughput(spark, prefix, new_schema=False, per_region=False, **kwargs):
+def throughput(spark, prefix, per_region=False, **kwargs):
     '''Computes throughput from client/*/transactions.csv file'''
-    sample = sample_rate(spark, prefix, new_schema)
-    throughput_sdf = transactions_csv(spark, prefix, new_schema, **kwargs)\
+    sample = sample_rate(spark, prefix)
+    throughput_sdf = transactions_csv(spark, prefix, **kwargs)\
         .select("machine", col("sent_at").alias("time"))\
         .groupBy("machine")\
         .agg(
@@ -207,19 +205,19 @@ def throughput(spark, prefix, new_schema=False, per_region=False, **kwargs):
         return throughput_sdf.select(F.sum("throughput").alias("throughput"))
 
 
-def latency(spark, prefixes, sample=1.0, new_schema=False, **kwargs):
+def latency(spark, prefixes, sample=1.0, **kwargs):
     '''Compute latency from client/*/transactions.csv file'''
     latency_sdfs = []
     for p in prefixes:
-        lat_sdf = transactions_csv(spark, p, new_schema, **kwargs).select(
+        lat_sdf = transactions_csv(spark, p, **kwargs).select(
             "txn_id",
             "coordinator",
-            "regions" if new_schema else "replicas",
+            "regions",
             "partitions",
             ((col("received_at") - col("sent_at")) / 1000000).alias("latency")
         )\
         .withColumn("prefix", lit(p))\
-        .sample(sample)
+        .sample(sample, seed=0)
 
         latency_sdfs.append(lat_sdf)
 
@@ -406,7 +404,7 @@ def plot_event_throughput(dfs, sharey=True, sharex=True, **kargs):
         '',
     ]
     num_rows, num_cols = compute_rows_cols(len(events), num_cols=3)
-    _, axes = plt.subplots(num_rows, num_cols, sharey=sharey, sharex=sharex, figsize=(17, 25))
+    fig, axes = plt.subplots(num_rows, num_cols, sharey=sharey, sharex=sharex, figsize=(17, 25))
     
     for df in dfs.values():
         df.loc[:, 'time'] = normalize(df.loc[:, 'time'])
@@ -442,3 +440,5 @@ def plot_event_throughput(dfs, sharey=True, sharex=True, **kargs):
         ax.annotate(row, xy=(-50, 110), xytext=(0, 0),
                     xycoords="axes points", textcoords='offset points',
                     size='x-large', ha='right')
+
+    return fig, axes
