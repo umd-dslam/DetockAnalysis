@@ -6,7 +6,9 @@ experiments="cockroach \
              ycsb-asym \
              ycsb-jitter \
              ycsb-jitter-overshoot10 \
-             ycsb-latency"
+             ycsb-latency \
+             crdb.csv \
+             crdb-latency.csv"
 
 for exp in $experiments
 do
