@@ -51,7 +51,6 @@ def get_index(spark, prefix):
 
 def transactions_csv(spark, prefix, start_offset_sec=0, duration_sec=1000000000):
     '''Reads client/*/transactions.csv files into a Spark dataframe'''
-    
     transactions_schema = StructType([
         StructField("txn_id", T.LongType(), False),
         StructField("coordinator", T.IntegerType(), False),
@@ -67,7 +66,7 @@ def transactions_csv(spark, prefix, start_offset_sec=0, duration_sec=1000000000)
     sdf = spark.read.csv(
         f"{prefix}/client/*/transactions.csv",
         header=True,
-        schema=transactions_schema
+        schema=transactions_schema,
     )\
     .withColumn(
         "regions",
@@ -205,6 +204,12 @@ def throughput(spark, prefix, per_region=False, **kwargs):
         return throughput_sdf.select(F.sum("throughput").alias("throughput"))
 
 
+def throughput2(spark, prefix):
+    summary = summary_csv(spark, prefix)\
+        .select((col("committed") / col("elapsed_time") * 1000000000).alias("throughput"))
+    return summary.select(F.sum("throughput").alias("throughput"))
+
+
 def latency(spark, prefixes, sample=1.0, **kwargs):
     '''Compute latency from client/*/transactions.csv file'''
     latency_sdfs = []
@@ -271,7 +276,7 @@ def events_latency(spark, prefix, from_event, to_event, new_col_name=None):
 
 #----------------------- server/*/events.csv -----------------------
 
-def events_csv(spark, prefix, new_schema=False):
+def events_csv(spark, prefix):
     '''Reads server/*/events.csv files into a Spark dataframe'''
 
     events_schema = StructType([
@@ -279,7 +284,7 @@ def events_csv(spark, prefix, new_schema=False):
         StructField("event", T.StringType(), False),
         StructField("time", T.DoubleType(), False),
         StructField("partition", T.IntegerType(), False),
-        StructField("region" if new_schema else "replica", T.IntegerType(), False),
+        StructField("region", T.IntegerType(), False),
     ])
 
     return spark.read.csv(
@@ -289,14 +294,14 @@ def events_csv(spark, prefix, new_schema=False):
     )
 
 
-def events_throughput(spark, prefix, sample, new_schema=False, per_machine=False):
+def events_throughput(spark, prefix, sample, per_machine=False):
     '''Counts number of events per time unit'''
 
     group_by_cols = ["event", "time"]
     if per_machine:
-        group_by_cols += ["partition", "region" if new_schema else "replica"]
+        group_by_cols += ["partition", "region"]
 
-    return events_csv(spark, prefix, new_schema).withColumn(
+    return events_csv(spark, prefix).withColumn(
         "time",
         (col("time") / 1000000000).cast(T.LongType())
     )\
@@ -373,7 +378,7 @@ def plot_cdf(a, ax=None, scale="log", **kargs):
         plt.xscale(scale)
 
 
-def plot_event_throughput(dfs, sharey=True, sharex=True, **kargs):
+def plot_event_throughput(dfs, group_by_machine=True, sharey=True, sharex=True, **kargs):
     events = [
         'ENTER_SERVER',
         'EXIT_SERVER_TO_FORWARDER',
@@ -412,14 +417,36 @@ def plot_event_throughput(dfs, sharey=True, sharex=True, **kargs):
     for i, event in enumerate(events):
         r, c = i // num_cols, i % num_cols
         for label, df in dfs.items():
-            df[df.event == event].plot(
-                x="time",
-                y="throughput",
-                title=event.replace('_', ' '),
-                marker='.',
-                label=label,
-                ax=axes[r, c]
-            )
+            if "partition" in df.columns:
+                if group_by_machine:
+                    partitions = df.partition.unique()
+                    for p in partitions:
+                        df[(df.event == event) & (df.partition == p)].plot(
+                            x="time",
+                            y="throughput",
+                            title=event.replace('_', ' '),
+                            marker='.',
+                            label=f"{label}_{p}",
+                            ax=axes[r, c]
+                        )
+                else: 
+                    df[(df.event == event) & (df.partition == 0)].plot(
+                        x="time",
+                        y="throughput",
+                        title=event.replace('_', ' '),
+                        marker='.',
+                        label=f"{label}_0",
+                        ax=axes[r, c]
+                    )
+            else:
+                df[df.event == event].plot(
+                    x="time",
+                    y="throughput",
+                    title=event.replace('_', ' '),
+                    marker='.',
+                    label=label,
+                    ax=axes[r, c]
+                )
         axes[r, c].grid(axis='y')
         axes[r, c].set_xlabel('time')
         axes[r, c].set_ylabel('txn/sec')
