@@ -1,6 +1,7 @@
 #!/bin/sh
 experiments="cockroach \
              cockroach-latency \
+             scale \
              tpcc \
              ycsb \
              ycsb-asym \
