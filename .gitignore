@@ -9,6 +9,7 @@
 !*.ipynb
 !*.sh
 !*.parquet
+!*.pickle
 !.gitignore
 !.keep
 !crdb.csv
